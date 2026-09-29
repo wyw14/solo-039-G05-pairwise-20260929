@@ -11,7 +11,7 @@ func TestWindowRejectsGenerationMismatch(t *testing.T) {
 	calibration := uuid.New()
 	feedRevision := uuid.New()
 	window.Reset(calibration, feedRevision)
-	if window.Add(model.Sample{Calibration: uuid.New(), FeedRevision: feedRevision, Valid: true, At: 1}) {
+	if window.Add(model.Sample{Certificate: uuid.New(), FeedRevision: feedRevision, Valid: true, At: 1}) {
 		t.Fatal("accepted another calibration")
 	}
 }

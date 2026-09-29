@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/google/uuid"
+	"github.com/wyw14/solo-039/internal/analyzer"
 	"net/http"
 	"time"
 )
@@ -37,8 +39,49 @@ func (s *Server) sample(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) calibrate(w http.ResponseWriter, r *http.Request) {
-	revision := s.plant.CalibrateAnalyzer()
-	writeJSON(w, http.StatusAccepted, map[string]any{"calibration_revision": revision})
+	var input calibrateRequest
+	if err := decodeJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	points := make([]analyzer.CalibrationPoint, 0, len(input.Points))
+	for _, point := range input.Points {
+		points = append(points, analyzer.CalibrationPoint{Reference: point.Reference, Response: point.Response})
+	}
+	cert, err := s.plant.IssueCalibration(analyzer.CertificateInput{
+		Component:  input.Component,
+		Points:     points,
+		ValidFrom:  input.ValidFrom,
+		ValidUntil: input.ValidUntil,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, cert)
+}
+
+func (s *Server) revokeCalibration(w http.ResponseWriter, r *http.Request) {
+	var input revokeCalibrationRequest
+	if err := decodeJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	id, err := uuid.Parse(input.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid calibration certificate id"})
+		return
+	}
+	cert, err := s.plant.RevokeCalibration(id, input.Reason)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, cert)
+}
+
+func (s *Server) calibrations(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"certificates": s.plant.CalibrationCertificates()})
 }
 
 func (s *Server) routeProduct(w http.ResponseWriter, r *http.Request) {

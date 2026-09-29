@@ -28,11 +28,15 @@ type Campaign struct {
 type Sample struct {
 	ID           uuid.UUID
 	FeedRevision uuid.UUID
-	Calibration  uuid.UUID
-	At           int64
-	Component    string
-	Value        float64
-	Valid        bool
+	// Certificate 是测量时适用的校准证 ID（原裸 calibration 代次）。
+	Certificate uuid.UUID
+	At          int64
+	Component   string
+	// Value 是仪器原始响应；Concentration 是按校准证拟合关系换算出的浓度。
+	// 原始响应必须随样本长期保留，撤销证书也不得删除。
+	Value         float64
+	Concentration float64
+	Valid         bool
 }
 
 type Proof struct {
@@ -42,7 +46,9 @@ type Proof struct {
 	Digest      string
 	Durable     bool
 	Independent bool
-	At          int64
+	// Stale 表示证明依赖的校准证已被撤销，证明必须重新评估。
+	Stale bool
+	At    int64
 }
 
 type ProductPlan struct {

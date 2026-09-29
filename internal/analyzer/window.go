@@ -9,14 +9,15 @@ import (
 type Window struct {
 	mu           sync.Mutex
 	samples      []model.Sample
-	calibration  uuid.UUID
+	calibration  uuid.UUID // 测量时适用的校准证 ID
 	feedRevision uuid.UUID
 	needed       int
 	maxGap       int64
+	latestAt     int64
 }
 
 func NewWindow() *Window {
-	return &Window{samples: make([]model.Sample, 0, 16), calibration: uuid.New(), needed: 3, maxGap: 60}
+	return &Window{samples: make([]model.Sample, 0, 16), calibration: uuid.Nil, needed: 3, maxGap: 60}
 }
 
 func (w *Window) Reset(calibration, feedRevision uuid.UUID) {
@@ -24,13 +25,14 @@ func (w *Window) Reset(calibration, feedRevision uuid.UUID) {
 	w.samples = nil
 	w.calibration = calibration
 	w.feedRevision = feedRevision
+	w.latestAt = 0
 	w.mu.Unlock()
 }
 
 func (w *Window) Add(sample model.Sample) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if !sample.Valid || sample.Calibration != w.calibration || sample.FeedRevision != w.feedRevision {
+	if !sample.Valid || sample.Certificate != w.calibration || sample.FeedRevision != w.feedRevision {
 		return false
 	}
 	if len(w.samples) > 0 {
@@ -43,6 +45,7 @@ func (w *Window) Add(sample model.Sample) bool {
 		}
 	}
 	w.samples = append(w.samples, sample)
+	w.latestAt = sample.At
 	return true
 }
 
@@ -64,6 +67,9 @@ func (w *Window) Identity() (uuid.UUID, uuid.UUID) {
 }
 
 func (w *Window) Complete() bool { w.mu.Lock(); defer w.mu.Unlock(); return len(w.samples) >= w.needed }
+
+// LatestAt 返回窗口内最近一次测量的时刻，即证明所代表的测量时刻。
+func (w *Window) LatestAt() int64 { w.mu.Lock(); defer w.mu.Unlock(); return w.latestAt }
 
 func (w *Window) Samples() []model.Sample {
 	w.mu.Lock()

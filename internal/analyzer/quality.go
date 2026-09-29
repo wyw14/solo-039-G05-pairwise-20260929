@@ -19,11 +19,11 @@ func (q Quality) Evaluate(samples []model.Sample) error {
 	}
 	average := 0.0
 	for _, sample := range samples {
-		average += sample.Value
+		average += sample.Concentration
 	}
 	average /= float64(len(samples))
 	for _, sample := range samples {
-		if sample.Value-average > q.MaxDeviation || average-sample.Value > q.MaxDeviation {
+		if sample.Concentration-average > q.MaxDeviation || average-sample.Concentration > q.MaxDeviation {
 			return errors.New("analyzer samples are unstable")
 		}
 	}

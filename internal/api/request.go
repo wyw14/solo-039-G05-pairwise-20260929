@@ -15,6 +15,20 @@ type sampleRequest struct {
 	Value float64 `json:"value"`
 	At    int64   `json:"at"`
 }
+type calibrateRequest struct {
+	Component  string            `json:"component"`
+	Points     []calibPointInput `json:"points"`
+	ValidFrom  int64             `json:"valid_from"`
+	ValidUntil int64             `json:"valid_until"`
+}
+type calibPointInput struct {
+	Reference float64 `json:"reference"`
+	Response  float64 `json:"response"`
+}
+type revokeCalibrationRequest struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
 type routeRequest struct {
 	Target string `json:"target"`
 }
