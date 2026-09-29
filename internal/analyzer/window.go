@@ -63,6 +63,13 @@ func (w *Window) Identity() (uuid.UUID, uuid.UUID) {
 	return w.calibration, w.feedRevision
 }
 
+// Config 返回窗口所需样本数与最大采样间隔，供恢复使用。
+func (w *Window) Config() (int, int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.needed, w.maxGap
+}
+
 func (w *Window) Complete() bool { w.mu.Lock(); defer w.mu.Unlock(); return len(w.samples) >= w.needed }
 
 func (w *Window) Samples() []model.Sample {

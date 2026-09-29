@@ -167,20 +167,72 @@ func (p *Plant) Transition(ctx context.Context, grade, source string) (model.Cam
 	return p.Campaign.Snapshot(), nil
 }
 
-func (p *Plant) AddSample(value float64, at int64) (int, error) {
-	revision := p.Feed.Current.Revision
-	calibration := p.Analyzer.Calibration()
-	ok := p.Analyzer.Add(model.Sample{ID: uuid.New(), FeedRevision: revision, Calibration: calibration, At: at, Component: "top", Value: value, Valid: true})
-	if !ok {
-		return p.Analyzer.SampleCount(), errors.New("sample rejected by current evidence generation")
+func (p *Plant) AddSample(component string, response float64, at int64) (model.Sample, int, error) {
+	if component == "" {
+		component = "top"
 	}
-	return p.Analyzer.SampleCount(), nil
+	sample, err := p.Analyzer.Measure(component, response, at)
+	if err != nil {
+		return sample, p.Analyzer.SampleCount(), err
+	}
+	return sample, p.Analyzer.SampleCount(), nil
 }
 
-func (p *Plant) CalibrateAnalyzer() uuid.UUID {
-	revision := p.Analyzer.Calibrate()
+// IssueCalibrationCertificate 用标准样签发校准证：输入参考浓度与仪器响应，
+// 拟合校准关系、记录残差与有效期，并说明对哪个组分及浓度范围有效。
+func (p *Plant) IssueCalibrationCertificate(component string, points []model.CalibrationPoint, issuedAt, expiresAt int64) (model.CalibrationCertificate, error) {
+	cert, err := p.Analyzer.IssueCertificate(component, points, issuedAt, expiresAt)
+	if err != nil {
+		return model.CalibrationCertificate{}, err
+	}
 	p.Analyzer.BindFeed(p.Feed.Current.Revision)
-	return revision
+	if err := p.record("analyzer.certificate_issued", cert.ID.String()); err != nil {
+		p.fail(err)
+		return model.CalibrationCertificate{}, err
+	}
+	return cert, nil
+}
+
+// RevokeCalibrationCertificate 撤销校准证：该证不再适用，依据它出具的分析仪证明
+// 与产品放行决策全部标记为需要重新评估；证书与原始响应保留不删。
+func (p *Plant) RevokeCalibrationCertificate(id uuid.UUID, reason string, at int64) (model.CalibrationCertificate, []string, error) {
+	cert, err := p.Analyzer.Book().Revoke(id, at, reason)
+	if err != nil {
+		return model.CalibrationCertificate{}, nil, err
+	}
+	evidenceRevisions := p.Evidence.InvalidateByCertificate(id)
+	productRevisions := p.ProductAudit.InvalidateByCertificate(id, reason)
+	seen := make(map[string]struct{}, len(evidenceRevisions)+len(productRevisions))
+	affected := make([]string, 0, len(evidenceRevisions)+len(productRevisions))
+	for _, revision := range append(evidenceRevisions, productRevisions...) {
+		if _, ok := seen[revision]; ok {
+			continue
+		}
+		seen[revision] = struct{}{}
+		affected = append(affected, revision)
+	}
+	if len(productRevisions) > 0 {
+		// 证书失效后，基于它放行的产品路由不再可靠，先关闭并等待重新评估出证。
+		p.Product.Route.Close()
+	}
+	if err := p.record("analyzer.certificate_revoked", id.String()+":"+reason); err != nil {
+		p.fail(err)
+		return cert, affected, err
+	}
+	return cert, affected, nil
+}
+
+// CalibrationCertificates 返回全部校准证（含已撤销）与当前代次。
+func (p *Plant) CalibrationCertificates() (uuid.UUID, []model.CalibrationCertificate) {
+	return p.Analyzer.Book().CurrentID(), p.Analyzer.Book().List()
+}
+
+// RawResponseCount 返回归档保留的仪器原始响应条数（含换代前与越界响应，不裁剪）。
+func (p *Plant) RawResponseCount() int { return len(p.Analyzer.ArchivedSamples()) }
+
+// PendingReevaluations 返回证书撤销后尚待重新评估的产品放行决策。
+func (p *Plant) PendingReevaluations() []product.Decision {
+	return p.ProductAudit.RequiringReevaluation()
 }
 
 func (p *Plant) RouteProduct(target string) error {
@@ -244,7 +296,20 @@ func (p *Plant) Shutdown(ctx context.Context, reliefTimeout bool) (relief.Shutdo
 }
 
 func (p *Plant) Snapshot() model.Snapshot {
-	return model.Snapshot{Campaign: p.Campaign.Snapshot(), Column: p.Column.Snapshot(), Reflux: p.RefluxState.Snapshot(), Reboiler: p.Reboiler.Snapshot(), Products: p.ProductTargets(), Relief: p.Relief.State.Snapshot()}
+	recovery := analyzer.Capture(p.Analyzer)
+	return model.Snapshot{
+		Campaign: p.Campaign.Snapshot(),
+		Column:   p.Column.Snapshot(),
+		Reflux:   p.RefluxState.Snapshot(),
+		Reboiler: p.Reboiler.Snapshot(),
+		Products: p.ProductTargets(),
+		Relief:   p.Relief.State.Snapshot(),
+		Analyzer: model.AnalyzerSnapshot{
+			Current:      recovery.Current,
+			Certificates: recovery.Certificates,
+			Samples:      recovery.Samples,
+		},
+	}
 }
 
 func (p *Plant) Save() error { return p.Snapshots.Save(p.Snapshot()) }
@@ -259,6 +324,13 @@ func (p *Plant) Restore() error {
 	if err := reboiler.Restore(p.Reboiler, snapshot.Reboiler, snapshot.Campaign); err != nil {
 		return err
 	}
+	analyzer.Restore(p.Analyzer, analyzer.RecoveryState{
+		Current:      snapshot.Analyzer.Current,
+		Certificates: snapshot.Analyzer.Certificates,
+		FeedRevision: snapshot.Column.FeedRevision,
+		Window:       nil,
+		Samples:      snapshot.Analyzer.Samples,
+	})
 	if err := journal.ValidateRecovery(snapshot, p.Journal.Events()); err != nil {
 		return err
 	}
@@ -284,7 +356,8 @@ func (p *Plant) Status() map[string]any {
 	lastError := p.lastError
 	p.mu.RUnlock()
 	gradient, _ := p.Profile.Gradient()
-	return map[string]any{"started": started, "last_error": lastError, "campaign": p.Campaign.Snapshot(), "column": p.Column.Snapshot(), "reflux_used": p.Reflux.Used(), "products": p.ProductTargets(), "relief": p.Relief.State.Snapshot(), "feed_metrics": p.FeedMetrics.Snapshot(), "reflux_telemetry": p.RefluxTelemetry.Snapshot(), "reboiler_telemetry": p.ReboilerTelemetry.Snapshot(), "product_decisions": p.ProductAudit.Count(), "utility_used": p.UtilityLedger.Used(), "metrics": p.Metrics.Snapshot(), "campaign_changes": p.CampaignHistory.Count(), "profile_gradient": gradient, "profile_stable": p.Profile.Stable(40), "evidence_count": p.Evidence.Count(p.Campaign.Snapshot().Revision.String()), "relief_attempts": p.ReliefHistory.Count(), "open_incidents": p.Incidents.CountOpen(), "operational_audit": p.OperationalAudit()}
+	certCurrent, certificates := p.CalibrationCertificates()
+	return map[string]any{"started": started, "last_error": lastError, "campaign": p.Campaign.Snapshot(), "column": p.Column.Snapshot(), "reflux_used": p.Reflux.Used(), "products": p.ProductTargets(), "relief": p.Relief.State.Snapshot(), "feed_metrics": p.FeedMetrics.Snapshot(), "reflux_telemetry": p.RefluxTelemetry.Snapshot(), "reboiler_telemetry": p.ReboilerTelemetry.Snapshot(), "product_decisions": p.ProductAudit.Count(), "utility_used": p.UtilityLedger.Used(), "metrics": p.Metrics.Snapshot(), "campaign_changes": p.CampaignHistory.Count(), "profile_gradient": gradient, "profile_stable": p.Profile.Stable(40), "evidence_count": p.Evidence.Count(p.Campaign.Snapshot().Revision.String()), "relief_attempts": p.ReliefHistory.Count(), "open_incidents": p.Incidents.CountOpen(), "calibration_current": certCurrent, "calibration_certificates": certificates, "raw_responses": len(p.Analyzer.ArchivedSamples()), "pending_reevaluations": p.ProductAudit.RequiringReevaluation(), "operational_audit": p.OperationalAudit()}
 }
 
 func (p *Plant) record(kind, payload string) error {

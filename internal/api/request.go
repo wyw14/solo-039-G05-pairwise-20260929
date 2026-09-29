@@ -12,8 +12,23 @@ type transitionRequest struct {
 	Source string `json:"source"`
 }
 type sampleRequest struct {
-	Value float64 `json:"value"`
-	At    int64   `json:"at"`
+	Component string  `json:"component"`
+	Response  float64 `json:"response"`
+	At        int64   `json:"at"`
+}
+type calibrationPointRequest struct {
+	Reference float64 `json:"reference"`
+	Response  float64 `json:"response"`
+}
+type issueCertificateRequest struct {
+	Component string                    `json:"component"`
+	Points    []calibrationPointRequest `json:"points"`
+	IssuedAt  int64                     `json:"issued_at"`
+	ExpiresAt int64                     `json:"expires_at"`
+}
+type revokeCertificateRequest struct {
+	Reason string `json:"reason"`
+	At     int64  `json:"at"`
 }
 type routeRequest struct {
 	Target string `json:"target"`

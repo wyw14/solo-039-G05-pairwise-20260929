@@ -28,17 +28,12 @@ func (s *Server) sample(w http.ResponseWriter, r *http.Request) {
 	if input.At == 0 {
 		input.At = time.Now().Unix()
 	}
-	count, err := s.plant.AddSample(input.Value, input.At)
+	sample, count, err := s.plant.AddSample(input.Component, input.Response, input.At)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "count": count})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"count": count})
-}
-
-func (s *Server) calibrate(w http.ResponseWriter, r *http.Request) {
-	revision := s.plant.CalibrateAnalyzer()
-	writeJSON(w, http.StatusAccepted, map[string]any{"calibration_revision": revision})
+	writeJSON(w, http.StatusAccepted, map[string]any{"sample": sample, "count": count})
 }
 
 func (s *Server) routeProduct(w http.ResponseWriter, r *http.Request) {

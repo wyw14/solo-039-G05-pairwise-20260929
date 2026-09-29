@@ -11,7 +11,11 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 	revision := s.plant.Campaign.Snapshot().Revision.String()
-	writeJSON(w, http.StatusOK, map[string]any{"revision": revision, "proofs": s.plant.Evidence.Independent(revision)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"revision":    revision,
+		"proofs":      s.plant.Evidence.Independent(revision),
+		"invalidated": s.plant.Evidence.Invalidated(revision),
+	})
 }
 
 func (s *Server) recovery(w http.ResponseWriter, r *http.Request) {

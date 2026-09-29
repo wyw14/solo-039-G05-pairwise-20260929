@@ -26,23 +26,29 @@ type Campaign struct {
 }
 
 type Sample struct {
-	ID           uuid.UUID
-	FeedRevision uuid.UUID
-	Calibration  uuid.UUID
-	At           int64
-	Component    string
-	Value        float64
-	Valid        bool
+	ID           uuid.UUID `json:"id"`
+	FeedRevision uuid.UUID `json:"feed_revision"`
+	Calibration  uuid.UUID `json:"calibration"`
+	At           int64     `json:"at"`
+	Component    string    `json:"component"`
+	// Response 是仪器原始响应，Value 是用测量时适用的校准证换算出的浓度。
+	// 原始响应随证据链长期保留，不随证书代次切换而丢弃。
+	Response float64 `json:"response"`
+	Value    float64 `json:"value"`
+	Valid    bool    `json:"valid"`
 }
 
 type Proof struct {
-	ID          uuid.UUID
-	Revision    uuid.UUID
-	Source      string
-	Digest      string
-	Durable     bool
-	Independent bool
-	At          int64
+	ID          uuid.UUID `json:"id"`
+	Revision    uuid.UUID `json:"revision"`
+	Source      string    `json:"source"`
+	Digest      string    `json:"digest"`
+	Durable     bool      `json:"durable"`
+	Independent bool      `json:"independent"`
+	// Invalidated 表示证明所依据的校准证已被撤销，证明必须重新评估；
+	// 记录本身不删除，保留完整审计轨迹。
+	Invalidated bool  `json:"invalidated"`
+	At          int64 `json:"at"`
 }
 
 type ProductPlan struct {
@@ -77,6 +83,7 @@ type Snapshot struct {
 	Reboiler Reboiler
 	Products []string
 	Relief   Relief
+	Analyzer AnalyzerSnapshot
 }
 
 type Column struct {
